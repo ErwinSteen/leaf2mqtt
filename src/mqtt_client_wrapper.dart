@@ -6,9 +6,17 @@ import 'package:mqtt_client/mqtt_server_client.dart';
 
 final Logger _log = Logger('MqttClientWrapper');
 
-typedef PayloadReceivedhandler = void Function(String payload);
+typedef PayloadReceivedHandler = void Function(String payload);
 
 class MqttClientWrapper {
+  late final MqttServerClient _mqttClient;
+  late final String _baseTopic;
+  final AsciiPayloadConverter _converter = AsciiPayloadConverter();
+
+  final Map<String, List<PayloadReceivedHandler>> _payloadReceivedHandlers = <String, List<PayloadReceivedHandler>>{};
+
+  ConnectCallback? onConnected;
+  DisconnectCallback? onDisconnected;
 
   MqttClientWrapper() {
     final Map<String, String> envVars = Platform.environment;
@@ -22,17 +30,7 @@ class MqttClientWrapper {
     _mqttClient.keepAlivePeriod = 60;
   }
 
-  MqttServerClient _mqttClient;
-  String _baseTopic;
-  final AsciiPayloadConverter _converter = AsciiPayloadConverter();
-
-  final Map<String, List<PayloadReceivedhandler>> _payloadReceivedHandlers = <String, List<PayloadReceivedhandler>>{};
-
-  ConnectCallback onConnected;
-
-  DisconnectCallback onDisconnected;
-
-  Future<void> connectWithRetry(String mqttUser, String mqttPassword) async {
+  Future<void> connectWithRetry(String? mqttUser, String? mqttPassword) async {
     _log.info('Connecting...');
     _mqttClient.onConnected = onConnected;
 
@@ -43,16 +41,16 @@ class MqttClientWrapper {
     bool connected = false;
     while (!connected) {
       try {
-        final MqttClientConnectionStatus connectionCode  = await _mqttClient.connect(mqttUser, mqttPassword);
-        _log.info('Mqtt connection code: ' + connectionCode.returnCode.toString());
-        connected = connectionCode.returnCode == MqttConnectReturnCode.connectionAccepted;
+        final MqttClientConnectionStatus connectionStatus = await _mqttClient.connect(mqttUser, mqttPassword);
+        _log.info('Mqtt connection code: ${connectionStatus.returnCode}');
+        connected = connectionStatus.returnCode == MqttConnectReturnCode.connectionAccepted;
       } catch (e, stackTrace) {
-        _log.warning('An error occured while connecting to MQTT broker. Retrying in 5 seconds.');
+        _log.warning('An error occurred while connecting to MQTT broker. Retrying in 5 seconds.');
         _log.info(e);
         _log.finest(stackTrace);
       }
 
-      if(connected){
+      if (connected) {
         _mqttClient.onDisconnected = () => connectWithRetry(mqttUser, mqttPassword);
       } else {
         await Future<void>.delayed(const Duration(seconds: 5));
@@ -67,28 +65,33 @@ class MqttClientWrapper {
     _mqttClient.updates.listen(_receiveData);
   }
 
-  void subscribeTopic(String topic, PayloadReceivedhandler handler){
+  void subscribeTopic(String topic, PayloadReceivedHandler handler) {
     _log.fine('Subscribing to $topic');
     _payloadReceivedHandlers.update(
       '$_baseTopic/$topic',
-      (List<PayloadReceivedhandler> handlers) { handlers.add(handler); return handlers; },
-      ifAbsent: () => <PayloadReceivedhandler> [handler]);
+      (List<PayloadReceivedHandler> handlers) {
+        handlers.add(handler);
+        return handlers;
+      },
+      ifAbsent: () => <PayloadReceivedHandler>[handler],
+    );
   }
 
   void publishMessage(String topic, String value) {
-    if (!(topic?.isEmpty ?? true) && !(value?.isEmpty ?? true) )
-    {
+    if (topic.isNotEmpty && value.isNotEmpty) {
       _log.finest('Publishing message $topic $value');
       try {
         _mqttClient.publishMessage(
           '$_baseTopic/$topic',
           MqttQos.atLeastOnce,
-          _converter.convertToBytes(value), retain: true);
-      } on ConnectionException catch (_) {
-        _log.finest('connection error while publishing message');
+          _converter.convertToBytes(value),
+          retain: true,
+        );
+      } on ConnectionException {
+        _log.finest('Connection error while publishing message');
         // does not matter, we will send back latest states on reconnect.
-      } catch(e, stackTrace) {
-        _log.fine('Exception when publishign message: $e');
+      } catch (e, stackTrace) {
+        _log.fine('Exception when publishing message: $e');
         _log.finer(stackTrace);
       }
     }
@@ -98,13 +101,12 @@ class MqttClientWrapper {
     for (final MqttReceivedMessage<MqttMessage> message in messages) {
       final MqttPublishMessage pubMessage = message.payload as MqttPublishMessage;
       final String payload =
-        MqttPublishPayload.bytesToStringAsString(pubMessage.payload.message)
-        .toLowerCase();
+          MqttPublishPayload.bytesToStringAsString(pubMessage.payload.message).toLowerCase();
 
       _log.finer('Received data: ${message.topic} $payload');
-      final List<PayloadReceivedhandler> handlers =
-        _payloadReceivedHandlers[message.topic] ?? List<PayloadReceivedhandler>.empty();
-      for (final PayloadReceivedhandler handler in handlers) {
+      final List<PayloadReceivedHandler> handlers =
+          _payloadReceivedHandlers[message.topic] ?? <PayloadReceivedHandler>[];
+      for (final PayloadReceivedHandler handler in handlers) {
         handler(payload);
       }
     }
