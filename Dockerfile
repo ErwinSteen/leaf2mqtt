@@ -1,4 +1,4 @@
-FROM dart:2.19.6-sdk AS build
+FROM dart:3.4.0-sdk AS build
 ARG APP_VERSION=unknown
 
 RUN apt-get update && \
