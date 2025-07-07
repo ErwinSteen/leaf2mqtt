@@ -1,5 +1,5 @@
 name: leaf2mqtt
-version: 0.1.0
+version: 0.1.1
 publish_to: 'none'
 dependencies:
   dartnissanconnectna:
@@ -10,8 +10,8 @@ dependencies:
       ref: v1.0.5
   dartcarwings:
     git:
-      url: https://github.com/kamiKAC/dartcarwings
-      ref: v1.0.1
+      url: https://github.com/Tobiaswk/dartcarwings
+      ref: main
   mqtt_client: ^9.6.1
   logging: ^1.0.1
 environment:
