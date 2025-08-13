@@ -21,16 +21,28 @@ LeafSession createLeafSession(LeafType leafType, String username, String passwor
   switch (leafType) {
     case LeafType.newerThanMay2019:
       return NissanConnectSessionWrapper(username, password);
+      break;
+
     case LeafType.olderCanada:
       return NissanConnectNASessionWrapper('CA', username, password);
+      break;
+
     case LeafType.olderUsa:
       return NissanConnectNASessionWrapper('US', username, password);
+      break;
+
     case LeafType.olderEurope:
       return CarwingsWrapper(CarwingsRegion.Europe, username, password);
+      break;
+
     case LeafType.olderJapan:
       return CarwingsWrapper(CarwingsRegion.Japan, username, password);
+      break;
+
     case LeafType.olderAustralia:
       return CarwingsWrapper(CarwingsRegion.Australia, username, password);
+      break;
+
     default:
       throw ArgumentError.value(leafType, 'leafType', 'this LeafType is not supported yet.');
   }
@@ -50,8 +62,8 @@ abstract class LeafSessionInternal extends LeafSession {
   void setVehicles(List<VehicleInternal> newVehicles) {
     // keep the last states
     for (final VehicleInternal lastKnownVehicle in _lastKnownVehicles) {
-      final VehicleInternal? matchingVehicle =
-          newVehicles.firstWhereOrNull((vehicle) => vehicle.vin == lastKnownVehicle.vin);
+      final VehicleInternal matchingVehicle =
+        newVehicles.firstWhere((VehicleInternal vehicle) => vehicle.vin == lastKnownVehicle.vin, orElse: () => null);
       matchingVehicle?.setLastKnownStatus(lastKnownVehicle);
     }
 
@@ -60,65 +72,68 @@ abstract class LeafSessionInternal extends LeafSession {
 
   @override
   Map<String, String> getAllLastKnownStatus() =>
-      _lastKnownVehicles.fold(<String, String>{}, (allLastKnownStatus, vehicle) {
+      _lastKnownVehicles.fold(<String, String>{},
+      (Map<String, String> allLastKnownStatus, VehicleInternal vehicle) {
         allLastKnownStatus.addAll(vehicle.getLastKnownStatus());
         return allLastKnownStatus;
-      });
+      } );
 }
 
+  /// The client Connect callback type
 typedef ExecutionErrorCallback = void Function(String vin);
 typedef ExecutableVehicleActionHandler<T> = Future<T> Function(Vehicle vehicle);
 typedef SyncExecutableVehicleActionHandler<T> = T Function(Vehicle vehicle);
-
 abstract class LeafSession {
-  LeafSession({this.onExecutionError});
 
-  ExecutionErrorCallback? onExecutionError;
+  ExecutionErrorCallback onExecutionError;
 
   List<Vehicle> get vehicles;
 
-  Vehicle _getVehicle(String vin) =>
-      vehicles.firstWhere((vehicle) => vehicle.vin == vin,
-          orElse: () => throw Exception('Vehicle $vin not found.'));
+   Vehicle _getVehicle(String vin) =>
+    vehicles.firstWhere((Vehicle vehicle) => vehicle.vin == vin,
+                        orElse: () => throw Exception('Vehicle $vin not found.'));
 
   Future<void> login();
 
   Map<String, String> getAllLastKnownStatus();
 
-  T? executeSync<T>(SyncExecutableVehicleActionHandler<T> executable, String vin) {
-    try {
-      return executable(_getVehicle(vin));
-    } catch (e, stackTrace) {
-      _logException(e, stackTrace);
-    }
-    return null;
+  T executeSync<T>(SyncExecutableVehicleActionHandler<T> executable, String vin) {
+      try {
+        return executable(_getVehicle(vin));
+      } catch (e, stackTrace) {
+        _logException(e, stackTrace);
+      }
+
+      return null;
   }
 
-  Future<void> executeCommandWithRetry(
-      ExecutableVehicleActionHandler<bool> executable, String vin, int commandAttempts) async {
+  Future<void> executeCommandWithRetry(ExecutableVehicleActionHandler<bool> executable, String vin, int commandAttempts) async {
     bool anyCommandSucceeded = false;
     for (int attempts = 0; attempts < commandAttempts; ++attempts) {
       try {
-        anyCommandSucceeded |= await _executeWithRetry((vehicle) async => await executable(vehicle), vin);
-      } catch (e, stackTrace) {
+        anyCommandSucceeded |= await _executeWithRetry((Vehicle vehicle) async {
+          return await executable(vehicle);
+        }, vin);
+      } catch(e, stackTrace) {
         _logException(e, stackTrace);
       }
     }
 
     if (!anyCommandSucceeded && onExecutionError != null) {
-      onExecutionError!(vin);
-    }
+        onExecutionError(vin);
+      }
   }
 
-  Future<T?> executeWithRetry<T>(ExecutableVehicleActionHandler<T> executable, String vin) async {
+  Future<T> executeWithRetry<T>(ExecutableVehicleActionHandler<T> executable, String vin) async {
     try {
       return await _executeWithRetry(executable, vin);
-    } catch (e, stackTrace) {
+    } catch(e, stackTrace) {
       _logException(e, stackTrace);
       if (onExecutionError != null) {
-        onExecutionError!(vin);
+        onExecutionError(vin);
       }
     }
+
     return null;
   }
 
@@ -129,7 +144,7 @@ abstract class LeafSession {
         try {
           _log.finer('Force a login before retrying failed execution.');
           await login();
-        } catch (e, stackTrace) {
+        } catch(e, stackTrace) {
           _logException(e, stackTrace);
         }
       }
@@ -139,8 +154,10 @@ abstract class LeafSession {
       } catch (e, stackTrace) {
         _logException(e, stackTrace);
       }
+
       ++attempts;
     }
+
     throw Exception('Execution failed.');
   }
 
@@ -155,12 +172,3 @@ abstract class LeafSession {
   }
 }
 
-/// Extension method to add firstWhereOrNull for convenience (or use package:collection)
-extension IterableExtensions<E> on Iterable<E> {
-  E? firstWhereOrNull(bool Function(E) test) {
-    for (var element in this) {
-      if (test(element)) return element;
-    }
-    return null;
-  }
-}

@@ -12,10 +12,11 @@ abstract class VehicleInternal extends Vehicle {
   }
 
   void setLastKnownStatus(Vehicle lastknownVehicle) =>
-      _lastKnownStatus.addAll(lastknownVehicle._lastKnownStatus);
+    _lastKnownStatus.addAll(lastknownVehicle._lastKnownStatus);
 
   @override
-  Map<String, String> getLastKnownStatus() => _prependVin(_lastKnownStatus);
+  Map<String, String> getLastKnownStatus() =>
+    _prependVin(_lastKnownStatus);
 
   Map<String, String> _prependVin(Map<String, String> status) {
     final Map<String, String> statusWithVin = <String, String>{};
@@ -26,9 +27,7 @@ abstract class VehicleInternal extends Vehicle {
       statusWithVin.addAll(status);
     }
 
-    status.forEach((String key, String value) {
-      statusWithVin['$vin/$key'] = value;
-    });
+    status.forEach((String key, String value) => statusWithVin['$vin/$key'] = value);
 
     return statusWithVin;
   }
@@ -42,29 +41,25 @@ abstract class Vehicle {
   bool isFirstVehicle();
 
   bool get isCharging =>
-      _findValueOfKeyIn(_lastKnownStatus, 'charging') == 'true';
+    _findValueOfKeyIn(_lastKnownStatus, 'charging') == 'true';
 
-  String? _findValueOfKeyIn(Map<String, String> status, String key) {
-    final entry = status.entries.firstWhere(
-      (MapEntry<String, String> status) => status.key.endsWith(key),
-      orElse: () => const MapEntry('', ''),
-    );
-    // Als key '' is, betekent dat we niets gevonden hebben, dus return null
-    return entry.key.isEmpty ? null : entry.value;
+  String _findValueOfKeyIn(Map<String, String> status, String key) {
+    return status.entries.firstWhere(
+             (MapEntry<String, String> status) =>
+               status.key.endsWith(key), orElse: () => null)?.value;
   }
 
   final Map<String, String> _lastKnownStatus = <String, String>{};
   Map<String, String> getLastKnownStatus();
 
   Map<String, String> getVehicleStatus() {
-    final Map<String, String?> info = <String, String?>{
+    final Map<String, String> info = <String, String>{
       'nickname': _lastKnownStatus['nickname'],
       'vin': _lastKnownStatus['vin'],
     };
 
     info['json'] = json.encode(info);
-    // Map<String, String> returnen, nulls vervangen door lege strings
-    return info.map((key, value) => MapEntry(key, value ?? ''));
+    return info;
   }
 
   Future<Map<String, String>> fetchDailyStatistics(DateTime targetDate);
@@ -80,3 +75,5 @@ abstract class Vehicle {
   Future<Map<String, String>> fetchLocation();
   Future<Map<String, String>> fetchCockpitStatus();
 }
+
+

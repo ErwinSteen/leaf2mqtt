@@ -7,7 +7,7 @@ import 'leaf/leaf_session.dart';
 import 'leaf/leaf_vehicle.dart';
 import 'mqtt_client_wrapper.dart';
 
-late LeafSession _session;
+LeafSession _session;
 int _commandAttempts = 2;
 const appVersion = String.fromEnvironment('APP_VERSION', defaultValue: 'unknown');
 
@@ -17,10 +17,10 @@ Future<void> main() async {
   final Map<String, String> envVars = Platform.environment;
 
   final String logLevelStr = envVars['LOG_LEVEL'] ?? '${Level.INFO}';
-  Level? logLevel =
-      Level.LEVELS.firstWhere(
-          (Level level) => level.name.toLowerCase() == logLevelStr.toLowerCase(),
-          orElse: () => null);
+  Level logLevel =
+    Level.LEVELS.firstWhere(
+      (Level level) => level.name.toLowerCase() == logLevelStr.toLowerCase(),
+      orElse: () => null);
 
   if (logLevel == null) {
     print('LOG_LEVEL environment variable should be set to a valid value from: ${Level.LEVELS}. Defaulting to Info.');
@@ -32,10 +32,10 @@ Future<void> main() async {
     print('${record.level.name}: ${record.time}: ${record.loggerName}: ${record.message}');
   });
 
-  _log.info('Version: $appVersion');
+  _log.info('Version: ${appVersion}');
 
-  final String? leafUser = envVars['LEAF_USERNAME'];
-  final String? leafPassword = envVars['LEAF_PASSWORD'];
+  final String leafUser = envVars['LEAF_USERNAME'];
+  final String leafPassword = envVars['LEAF_PASSWORD'];
 
   if ((leafUser?.isEmpty ?? true) || (leafPassword?.isEmpty ?? true)) {
     _log.severe('LEAF_USERNAME and LEAF_PASSWORD environment variables must be set.');
@@ -43,10 +43,10 @@ Future<void> main() async {
   }
 
   final String leafTypeStr = envVars['LEAF_TYPE'] ?? 'oldUSA';
-  final LeafType? leafType =
-      LeafType.values.firstWhere(
-          (LeafType e) => e.toString().toLowerCase().endsWith(leafTypeStr.toLowerCase()),
-          orElse: () => null);
+  final LeafType leafType =
+    LeafType.values.firstWhere(
+      (LeafType e) => e.toString().toLowerCase().endsWith(leafTypeStr.toLowerCase()),
+      orElse: () => null);
 
   if (leafType == null) {
     final String leafTypes = LeafType.values.toString();
@@ -54,12 +54,12 @@ Future<void> main() async {
     exit(2);
   }
 
-  _commandAttempts = int.tryParse(envVars['COMMAND_ATTEMPTS'] ?? '1') ?? 1;
+  _commandAttempts = int.tryParse(envVars['COMMAND_ATTEMPTS']  ?? '1') ?? 1;
 
   final MqttClientWrapper mqttClient = MqttClientWrapper();
   await mqttClient.connectWithRetry(envVars['MQTT_USERNAME'], envVars['MQTT_PASSWORD']);
 
-  _session = createLeafSession(leafType, leafUser!, leafPassword!);
+  _session = createLeafSession(leafType, leafUser, leafPassword);
   _session.onExecutionError = (String vin) => _onExecutionError(mqttClient, vin);
 
   await _login(mqttClient);
@@ -67,14 +67,16 @@ Future<void> main() async {
   mqttClient.onConnected = () => _onConnected(mqttClient);
   _onConnected(mqttClient);
 
+  // Starting one loop per vehicle because each can have different interval depending on their state.
   await Future.wait(_session.vehicles.map((Vehicle vehicle) => startUpdateLoop(mqttClient, vehicle.vin)));
 }
 
-Completer<void>? _loginCompleter;
+Completer<void> _loginCompleter;
 Future<void> _login(MqttClientWrapper mqttClient) async {
   if (_loginCompleter != null) {
     _log.fine('Already logging in, waiting...');
-    await _loginCompleter!.future;
+    // already logging in.. wait for it to complete.
+    await _loginCompleter.future;
     return;
   }
 
@@ -82,12 +84,12 @@ Future<void> _login(MqttClientWrapper mqttClient) async {
   _loginCompleter = Completer<void>();
 
   bool loggedIn = false;
-  while (!loggedIn) {
+  while(!loggedIn) {
     try {
       await _session.login();
       _log.info('Login successful');
       loggedIn = true;
-      _loginCompleter!.complete();
+      _loginCompleter.complete();
       _loginCompleter = null;
     } catch (e, stacktrace) {
       _log.warning('An error occured while logging in. Please make sure you have selected the right LEAF_TYPE, LEAF_USERNAME and LEAF_PASSWORD. Retrying in 5 seconds.');
@@ -102,7 +104,7 @@ Future<void> _login(MqttClientWrapper mqttClient) async {
 Future<void> startUpdateLoop(MqttClientWrapper mqttClient, String vin) async {
   _log.info('Starting loop for $vin');
   final Map<String, String> envVars = Platform.environment;
-  final int updateIntervalMinutes = int.tryParse(envVars['UPDATE_INTERVAL_MINUTES'] ?? '60') ?? 60;
+  final int updateIntervalMinutes = int.tryParse(envVars['UPDATE_INTERVAL_MINUTES']  ?? '60') ?? 60;
   final int chargingUpdateIntervalMinutes = int.tryParse(envVars['CHARGING_UPDATE_INTERVAL_MINUTES'] ?? '15') ?? 15;
 
   subscribeToCommands(mqttClient, vin);
@@ -133,53 +135,50 @@ void subscribeToCommands(MqttClientWrapper mqttClient, String vin) {
   }
 
   subscribe('command', (String payload) {
-    switch (payload) {
-      case 'update':
-        fetchAndPublishAllStatus(mqttClient, vin);
-        break;
-      default:
-    }
-  });
+      switch (payload) {
+        case 'update':
+            fetchAndPublishAllStatus(mqttClient, vin);
+          break;
+        default:
+      }
+    });
 
   subscribe('command/battery', (String payload) {
-    switch (payload) {
-      case 'update':
-        fetchAndPublishBatteryStatus(mqttClient, vin);
-        break;
-      case 'startcharging':
-        _session.executeCommandWithRetry((Vehicle vehicle) => vehicle.startCharging(), vin, _commandAttempts).then(
+      switch (payload) {
+        case 'update':
+            fetchAndPublishBatteryStatus(mqttClient, vin);
+          break;
+        case 'startcharging':
+            _session.executeCommandWithRetry((Vehicle vehicle) => vehicle.startCharging(), vin, _commandAttempts).then(
               (_) => Future<void>.delayed(const Duration(seconds: 5)).then(
-                    (_) => fetchAndPublishBatteryStatus(mqttClient, vin),
-                  ),
-            );
-        break;
-      default:
-    }
-  });
+                (_) => fetchAndPublishBatteryStatus(mqttClient, vin)));
+          break;
+        default:
+      }
+    });
 
   subscribe('command/climate', (String payload) {
     switch (payload) {
       case 'update':
-        fetchAndPublishClimateStatus(mqttClient, vin);
+          fetchAndPublishClimateStatus(mqttClient, vin);
         break;
       case 'stop':
-        _session.executeCommandWithRetry((Vehicle vehicle) => vehicle.stopClimate(), vin, _commandAttempts).then(
-              (_) => Future<void>.delayed(const Duration(seconds: 5)).then(
-                    (_) => fetchAndPublishClimateStatus(mqttClient, vin),
-                  ),
-            );
+          _session.executeCommandWithRetry((Vehicle vehicle) => vehicle.stopClimate(), vin, _commandAttempts).then(
+            (_) => Future<void>.delayed(const Duration(seconds: 5)).then(
+              (_) => fetchAndPublishClimateStatus(mqttClient, vin)));
         break;
       default:
-        if (payload.startsWith('start')) {
-          int? targetTemperatureCelsius;
+        if (payload?.startsWith('start') ?? false) {
+          int targetTemperatureCelsius;
 
           String targetTemperature = payload.replaceFirst('start', '').trim();
           if (targetTemperature.startsWith('c')) {
             targetTemperature = targetTemperature.replaceFirst('c', '').trim();
             targetTemperatureCelsius = double.tryParse(targetTemperature)?.round();
+
           } else if (targetTemperature.startsWith('f')) {
             targetTemperature = targetTemperature.replaceFirst('f', '').trim();
-            final int? targetTemperatureFahrenheit = double.tryParse(targetTemperature)?.round();
+            final int targetTemperatureFahrenheit = double.tryParse(targetTemperature)?.round();
 
             if (targetTemperatureFahrenheit != null) {
               targetTemperatureCelsius = ((targetTemperatureFahrenheit - 32) * 5 / 9).round();
@@ -188,16 +187,11 @@ void subscribeToCommands(MqttClientWrapper mqttClient, String vin) {
             targetTemperatureCelsius = 21;
           }
 
-          if (targetTemperatureCelsius != null) {
-            _session.executeCommandWithRetry(
-              (Vehicle vehicle) => vehicle.startClimate(targetTemperatureCelsius),
-              vin,
-              _commandAttempts,
-            ).then(
-              (_) => Future<void>.delayed(const Duration(seconds: 5)).then(
-                    (_) => fetchAndPublishClimateStatus(mqttClient, vin),
-                  ),
-            );
+          if (targetTemperatureCelsius != null){
+            _session.executeCommandWithRetry((Vehicle vehicle) =>
+              vehicle.startClimate(targetTemperatureCelsius), vin, _commandAttempts).then(
+                (_) => Future<void>.delayed(const Duration(seconds: 5)).then(
+                  (_) => fetchAndPublishClimateStatus(mqttClient, vin)));
           }
         }
         break;
@@ -221,18 +215,18 @@ void subscribeToCommands(MqttClientWrapper mqttClient, String vin) {
   });
 
   subscribe('command/location', (String payload) {
-    switch (payload) {
-      case 'update':
-        fetchAndPublishLocation(mqttClient, vin);
-        break;
-      default:
-    }
-  });
+      switch (payload) {
+        case 'update':
+            fetchAndPublishLocation(mqttClient, vin);
+          break;
+        default:
+      }
+    });
 
   subscribe('command/cockpitStatus', (String payload) {
     switch (payload) {
       case 'update':
-        fetchAndPublishCockpitStatus(mqttClient, vin);
+          fetchAndPublishCockpitStatus(mqttClient, vin);
         break;
       default:
     }
@@ -241,42 +235,50 @@ void subscribeToCommands(MqttClientWrapper mqttClient, String vin) {
 
 Future<void> fetchAndPublishDailyStats(MqttClientWrapper mqttClient, String vin, DateTime targetDay) {
   _log.finer('fetchAndPublishDailyStats for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchDailyStatistics(targetDay), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchDailyStatistics(targetDay), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishMonthlyStats(MqttClientWrapper mqttClient, String vin, DateTime targetMonth) {
   _log.finer('fetchAndPublishMonthlyStats for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchMonthlyStatistics(targetMonth), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchMonthlyStatistics(targetMonth), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishBatteryStatus(MqttClientWrapper mqttClient, String vin) {
   _log.finer('fetchAndPublishBatteryStatus for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchBatteryStatus(), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchBatteryStatus(), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishClimateStatus(MqttClientWrapper mqttClient, String vin) {
   _log.finer('fetchAndPublishClimateStatus for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchClimateStatus(), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchClimateStatus(), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishLocation(MqttClientWrapper mqttClient, String vin) {
   _log.finer('fetchAndPublishLocation for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchLocation(), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchLocation(), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishCockpitStatus(MqttClientWrapper mqttClient, String vin) {
   _log.finer('fetchAndPublishCockpit for $vin');
-  return _session.executeWithRetry((Vehicle vehicle) => vehicle.fetchCockpitStatus(), vin).then(mqttClient.publishStates);
+  return _session.executeWithRetry((Vehicle vehicle) =>
+           vehicle.fetchCockpitStatus(), vin).then(mqttClient.publishStates);
 }
 
 Future<void> fetchAndPublishAllStatus(MqttClientWrapper mqttClient, String vin) {
   _log.finer('fetchAndPublishAllStatus for $vin');
-  return Future.wait(<Future<void>>[
-    Future<void>(() => mqttClient.publishStates(_session.executeSync((Vehicle vehicle) => vehicle.getVehicleStatus(), vin) ?? <String, String>{})),
+  return Future.wait(<Future<void>> [
+    Future<void>(() => mqttClient.publishStates(
+      _session.executeSync((Vehicle vehicle) => vehicle.getVehicleStatus(), vin))),
     fetchAndPublishBatteryStatus(mqttClient, vin),
     fetchAndPublishCockpitStatus(mqttClient, vin),
     fetchAndPublishClimateStatus(mqttClient, vin),
     fetchAndPublishLocation(mqttClient, vin)
+
   ]);
 }
 
@@ -286,17 +288,17 @@ void _onConnected(MqttClientWrapper mqttClient) {
   mqttClient.publishStates(_session.getAllLastKnownStatus());
 }
 
-void _onExecutionError(MqttClientWrapper mqttClient, [String? vin]) {
+void _onExecutionError(MqttClientWrapper mqttClient, [String vin]) {
   _log.warning('Could not execute request.');
   final String errorDateTime = DateTime.now().toUtc().toIso8601String();
   mqttClient.publishMessage('lastErrorDateTimeUtc', errorDateTime);
   if (vin != null) {
-    mqttClient.publishMessage('$vin/lastErrorDateTimeUtc', errorDateTime);
+    mqttClient.publishMessage('{vin}/lastErrorDateTimeUtc', errorDateTime);
   }
 }
 
 extension on MqttClientWrapper {
-  void publishStates(Map<String, String>? states) {
+  void publishStates(Map<String, String> states) {
     if (states != null) {
       _log.finest('publishStates ${states.toString()}');
       states.forEach(publishMessage);
